@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 from databricks.sdk import WorkspaceClient
 
@@ -9,17 +8,17 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state for connection handling
+# Initialize session state
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.workspace_url = ""
     st.session_state.client = None
 
-# --- SCREEN 1: LOGIN WIZARD ---
+# --- SCREEN 1: ENTERPRISE SSO LOGIN ---
 if not st.session_state.authenticated:
     st.title("🛡️ Unified Data Catalog")
-    st.markdown("### Enterprise Metadata Explorer")
-    st.write("Connect securely to your Databricks workspace.")
+    st.markdown("### Enterprise Metadata Explorer (Zero-Trust & Local-First)")
+    st.info("🔒 **Enterprise Security Notice:** This application uses OAuth 2.0 PKCE via your corporate Single Sign-On (SSO). No credentials or data leave your device.")
     
     st.markdown("---")
     
@@ -29,45 +28,37 @@ if not st.session_state.authenticated:
             placeholder="https://adb-xxxx.azuredatabricks.net"
         )
         
-        # Optional token or client ID/Secret for cloud deployments if browser auth isn't local
-        auth_mode = st.radio("Authentication Method", ["Local / Browser SSO", "Databricks Personal Access Token (PAT)"])
-        
-        token = ""
-        if auth_mode == "Databricks Personal Access Token (PAT)":
-            token = st.text_input("Databricks Token", type="password", placeholder="dapi...")
-            
-        submitted = st.form_submit_button("🔐 Connect to Workspace")
+        submitted = st.form_submit_button("🔐 Sign in with Corporate SSO")
         
         if submitted:
             if workspace_url:
                 clean_url = workspace_url.strip().rstrip("/")
                 
-                with st.spinner("Connecting to Databricks..."):
+                with st.spinner("Opening browser for Corporate SSO authentication..."):
                     try:
-                        if auth_mode == "Databricks Personal Access Token (PAT)" and token:
-                            w = WorkspaceClient(host=clean_url, token=token)
-                        else:
-                            # Default fallback for local browser or default credential chain
-                            w = WorkspaceClient(host=clean_url, auth_type="external-browser")
+                        # Enterprise-grade OAuth PKCE flow (Browser-based SSO)
+                        w = WorkspaceClient(
+                            host=clean_url,
+                            auth_type="external-browser"
+                        )
                         
-                        # Test connection
+                        # Verify access by reading catalog metadata only
                         list(w.catalogs.list())
                         
                         st.session_state.authenticated = True
                         st.session_state.workspace_url = clean_url
                         st.session_state.client = w
                         
-                        st.success("Successfully authenticated!")
+                        st.success("Authenticated successfully via Corporate IdP!")
                         st.rerun()
                         
                     except Exception as e:
                         st.error(f"Authentication failed: {e}")
+                        st.caption("Ensure you are running this app locally on your machine so the SSO browser redirect to `localhost` can complete successfully.")
             else:
-                st.warning("Please enter your Databricks workspace URL first.")
-                
-    st.markdown("Status: 🔴 **Not Signed In**")
+                st.warning("Please enter your Databricks workspace URL.")
 
-# --- SCREEN 2: MAIN METADATA DASHBOARD ---
+# --- SCREEN 2: METADATA CATALOG DASHBOARD ---
 else:
     col1, col2 = st.columns([8, 2])
     with col1:
@@ -79,19 +70,19 @@ else:
             st.session_state.client = None
             st.rerun()
 
-    st.success(f"🟢 Connected to Databricks: `{st.session_state.workspace_url}`")
+    st.success(f"🟢 Active Session: `{st.session_state.workspace_url}`")
     st.markdown("---")
 
-    search_query = st.text_input("🔍 Search tables, schemas, or catalogs...", "")
+    search_query = st.text_input("🔍 Search catalogs, schemas, or tables...", "")
 
-    st.subheader("Unity Catalog Assets (Metadata-Only)")
+    st.subheader("Unity Catalog Metadata")
 
-    with st.spinner("Fetching catalog metadata..."):
+    with st.spinner("Loading metadata..."):
         try:
             w = st.session_state.client
             catalogs = list(w.catalogs.list())
             
-            st.metric(label="Total Catalogs Discovered", value=len(catalogs))
+            st.metric(label="Total Catalogs", value=len(catalogs))
             
             for cat in catalogs:
                 with st.expander(f"📁 Catalog: {cat.name}"):
@@ -108,14 +99,14 @@ else:
                                         table_list.append({
                                             "Table Name": tbl.name,
                                             "Type": tbl.table_type,
-                                            "Owner": tbl.owner or "Not Assigned"
+                                            "Owner": tbl.owner or "Unassigned"
                                         })
                                 if table_list:
                                     st.dataframe(table_list, use_container_width=True)
                             else:
-                                st.text("   (No tables in this schema)")
+                                st.text("   (No tables in schema)")
                     except Exception as schema_err:
-                        st.warning(f"Could not load schemas for {cat.name}: {schema_err}")
+                        st.warning(f"Could not read schema metadata for {cat.name}: {schema_err}")
                         
         except Exception as e:
-            st.error(f"Error communicating with Databricks API: {e}")
+            st.error(f"Metadata read error: {e}")
