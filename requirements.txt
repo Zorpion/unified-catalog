@@ -1,0 +1,4 @@
+streamlit
+databricks-sdk
+python-dotenv
+
